@@ -310,8 +310,8 @@ export class MatchGame {
   /** 手指/鼠标移动：位移过阈值就抓起格子，之后格子实时贴在手指上走。 */
   pointerMove(canvas: HTMLCanvasElement, id: number, clientX: number, clientY: number) {
     if (!this.pointer || this.pointer.id !== id) return;
-    this.pointer.x = clientX;
-    this.pointer.y = clientY;
+    // 注意：this.pointer.x/y 必须保持"按下原点"（pointerUp 兜底滑动和 7px 阈值都靠它），
+    // 这里绝不能覆盖。
     if (this.busy() || this.finished) return;
     const start = this.pointer;
     const { pad, cell, gap } = this.layout;

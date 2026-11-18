@@ -6,7 +6,7 @@
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
-    "html": "vite build && node tools/make-single-html.cjs",
+    "html": "node tools/build-single.cjs",
     "serve": "node tools/serve-dist.cjs 8090"
   },
   "dependencies": {
