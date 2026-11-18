@@ -32,7 +32,29 @@ out = out.replace(
   (_, src) => `<script type="module">\n${safeJs(readAsset(src))}\n</script>`,
 );
 
-// 3) 顺手把还残留的 /assets/ 绝对路径改成相对（图片之类）
+// 3) 图片等二进制资源 → data URI。
+//    vite 默认只内联 <4KB 的小图；grok 精修贴图 5~30KB 会变成外链 ./assets/*，
+//    单文件 HTML 和 Pages（仓库根没有 assets 目录）都会丢图，所以这里统一内联。
+const mime = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+};
+const assetsDir = path.join(dist, "assets");
+if (fs.existsSync(assetsDir)) {
+  for (const f of fs.readdirSync(assetsDir)) {
+    const ext = path.extname(f).toLowerCase();
+    if (!mime[ext]) continue;
+    const uri = `data:${mime[ext]};base64,${fs.readFileSync(path.join(assetsDir, f)).toString("base64")}`;
+    const esc = f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`(?:\\./|/)assets/${esc}`, "g"), uri);
+  }
+}
+
+// 4) 顺手把还残留的 /assets/ 绝对路径改成相对（理论上第 3 步已清空）
 out = out.replace(/(["'(])\/assets\//g, "$1./assets/");
 
 fs.writeFileSync(outFile, out, "utf8");

@@ -8,7 +8,13 @@ import { COLS, ROWS } from "@/game/model";
 import { DEFAULT_LINE, FOOD_NAMES, FOODS, HUNGER_MAX } from "@/game/content";
 import { menuProgress, type Menu } from "@/game/menu";
 import { MatchGame, type Callout } from "@/game/play";
-import mengzhiImg from "@/assets/mengzhi_chibi.png";
+import mengzhiF1 from "@/assets/mengzhi_f1.png";
+import mengzhiF2 from "@/assets/mengzhi_f2.png";
+import mengzhiF3 from "@/assets/mengzhi_f3.png";
+import mengzhiF4 from "@/assets/mengzhi_f4.png";
+
+// 立绘是 4 帧循环动画（140ms/帧），梦芝会自己轻轻动。
+const MENGZHI_FRAMES = [mengzhiF1, mengzhiF2, mengzhiF3, mengzhiF4];
 
 type Progress = ReturnType<typeof menuProgress>;
 
@@ -28,6 +34,17 @@ export function ZhizhiGame() {
   const [finished, setFinished] = useState(false);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [progress, setProgress] = useState<Progress>([]);
+  const [frame, setFrame] = useState(0);
+
+  // 立绘帧循环：140ms 一帧；尊重 reduce-motion 时停在第一帧。
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const timer = window.setInterval(
+      () => setFrame((f) => (f + 1) % MENGZHI_FRAMES.length),
+      140,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -145,7 +162,7 @@ export function ZhizhiGame() {
           className={`ye-anchor ye-face ${bounce > 0 ? "ye-hop" : ""}`}
           aria-hidden="true"
         >
-          <img src={mengzhiImg} className="ye-portrait" alt="" />
+          <img src={MENGZHI_FRAMES[frame]} className="ye-portrait" alt="" />
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-primary">给叶梦芝</p>
