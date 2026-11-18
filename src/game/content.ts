@@ -3,7 +3,7 @@ import type { Special } from "./model";
 /** Tile type 0 is FOODS[0]. model.ts TYPES must stay equal to FOODS.length. */
 
 export const BEST_KEY = "zhizhi-xiaoxiao-best";
-export const DEFAULT_LINE = "点相邻的，或轻轻一滑";
+export const DEFAULT_LINE = "按住拖到隔壁松手，或点相邻两块";
 
 export const SWAP_DUR = 0.11;
 export const POP_DUR = 0.2;

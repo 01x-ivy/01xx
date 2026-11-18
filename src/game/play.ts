@@ -89,6 +89,22 @@ const FEED_TY = -1.2;
 
 type Floater = { c: number; r: number; text: string; life: number; max: number; size: number };
 
+/** 拖拽跟手：格子本体实时贴在手指上，x/y 是格子左上角的画布坐标。 */
+type Drag = {
+  id: number;
+  visId: number;
+  homeR: number;
+  homeC: number;
+  grabDX: number;
+  grabDY: number;
+  x: number;
+  y: number;
+  target: { r: number; c: number } | null;
+};
+
+/** 松手没落点时的回弹时长（秒）。 */
+const RETURN_DUR = 0.2;
+
 type Phase =
   | { kind: "idle" }
   | {
@@ -173,6 +189,10 @@ export class MatchGame {
   floaters: Floater[] = [];
   layout: Layout = { pad: 8, gap: 4, cell: 44, width: 320, height: 420 };
   private pointer: { id: number; r: number; c: number; x: number; y: number } | null = null;
+  /** 跟手拖拽中的格子；null = 没有拖拽。 */
+  private drag: Drag | null = null;
+  /** 松手没落点时的回弹动画队列。 */
+  private returns: Array<{ id: number; x: number; y: number; t: number }> = [];
   private sfx = new Sfx();
 
   constructor() {
@@ -217,6 +237,8 @@ export class MatchGame {
     this.particles = [];
     this.floaters = [];
     this.moved = [];
+    this.drag = null;
+    this.returns = [];
     this.phase = { kind: "idle" };
     this.board = createBoard();
     this.tiles = tilesFrom(this.board);
@@ -285,13 +307,72 @@ export class MatchGame {
     this.pointer = { id, r: cell.r, c: cell.c, x: clientX, y: clientY };
   }
 
+  /** 手指/鼠标移动：位移过阈值就抓起格子，之后格子实时贴在手指上走。 */
+  pointerMove(canvas: HTMLCanvasElement, id: number, clientX: number, clientY: number) {
+    if (!this.pointer || this.pointer.id !== id) return;
+    this.pointer.x = clientX;
+    this.pointer.y = clientY;
+    if (this.busy() || this.finished) return;
+    const start = this.pointer;
+    const { pad, cell, gap } = this.layout;
+    const stride = cell + gap;
+    if (!this.drag) {
+      // 7px 内算"点"不算"拖"，保住点选交换的手感
+      if (Math.hypot(clientX - start.x, clientY - start.y) < 7) return;
+      const vis = this.tiles.find((tile) => tile.homeR === start.r && tile.homeC === start.c);
+      if (!vis) return;
+      const p = this.toLayout(canvas, clientX, clientY);
+      const cx = pad + start.c * stride + cell / 2;
+      const cy = pad + start.r * stride + cell / 2;
+      this.drag = {
+        id,
+        visId: vis.id,
+        homeR: start.r,
+        homeC: start.c,
+        grabDX: p.x - cx,
+        grabDY: p.y - cy,
+        x: cx - cell / 2,
+        y: cy - cell / 2,
+        target: null,
+      };
+      this.selected = null;
+      this.hint = null;
+      this.idleFor = 0;
+      this.idlePing = 0;
+    }
+    const p = this.toLayout(canvas, clientX, clientY);
+    this.drag.x = p.x - this.drag.grabDX - cell / 2;
+    this.drag.y = p.y - this.drag.grabDY - cell / 2;
+    // 落点 = 被拖格子中心压住的相邻格；压不到相邻格就是 null（松手回弹）
+    const fc = (this.drag.x + cell / 2 - pad) / stride - 0.5;
+    const fr = (this.drag.y + cell / 2 - pad) / stride - 0.5;
+    const tc = Math.round(fc);
+    const tr = Math.round(fr);
+    this.drag.target =
+      tr >= 0 && tc >= 0 && tr < ROWS && tc < COLS && adjacent(this.drag.homeR, this.drag.homeC, tr, tc)
+        ? { r: tr, c: tc }
+        : null;
+  }
+
   pointerUp(canvas: HTMLCanvasElement, id: number, clientX: number, clientY: number) {
     if (!this.pointer || this.pointer.id !== id) return;
     const start = this.pointer;
     this.pointer = null;
+    if (this.drag && this.drag.id === id) {
+      const drag = this.drag;
+      this.drag = null;
+      if (this.busy() || this.finished) return;
+      if (drag.target) {
+        this.trySwap(drag.homeR, drag.homeC, drag.target.r, drag.target.c);
+        return;
+      }
+      this.returns.push({ id: drag.visId, x: drag.x, y: drag.y, t: 0 });
+      return;
+    }
     if (this.busy()) return;
     const dx = clientX - start.x;
     const dy = clientY - start.y;
+    // 兜底：拖拽没起来（按下瞬间在忙）时的老滑动手势
     if (Math.hypot(dx, dy) > 16) {
       const horizontal = Math.abs(dx) > Math.abs(dy);
       const r2 = start.r + (horizontal ? 0 : dy > 0 ? 1 : -1);
@@ -314,13 +395,23 @@ export class MatchGame {
 
   pointerCancel(id: number) {
     if (this.pointer?.id === id) this.pointer = null;
+    if (this.drag?.id === id) {
+      this.returns.push({ id: this.drag.visId, x: this.drag.x, y: this.drag.y, t: 0 });
+      this.drag = null;
+    }
+  }
+
+  private toLayout(canvas: HTMLCanvasElement, clientX: number, clientY: number) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((clientX - rect.left) / rect.width) * this.layout.width,
+      y: ((clientY - rect.top) / rect.height) * this.layout.height,
+    };
   }
 
   private cellAt(canvas: HTMLCanvasElement, clientX: number, clientY: number) {
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    const x = ((clientX - rect.left) / rect.width) * this.layout.width;
-    const y = ((clientY - rect.top) / rect.height) * this.layout.height;
+    const { x, y } = this.toLayout(canvas, clientX, clientY);
+    if (this.layout.width <= 0 || this.layout.height <= 0) return null;
     const stride = this.layout.cell + this.layout.gap;
     const c = Math.floor((x - this.layout.pad) / stride);
     const r = Math.floor((y - this.layout.pad) / stride);
@@ -539,6 +630,13 @@ export class MatchGame {
       floater.r -= dt * 0.8;
     }
     this.floaters = this.floaters.filter((floater) => floater.life > 0);
+    for (const ret of this.returns) ret.t += dt;
+    this.returns = this.returns.filter((ret) => ret.t < RETURN_DUR);
+    // 拖到一半游戏进入忙态（结算/连锁）：强制松手回弹，不卡死输入
+    if (this.drag && (this.busy() || this.finished)) {
+      this.returns.push({ id: this.drag.visId, x: this.drag.x, y: this.drag.y, t: 0 });
+      this.drag = null;
+    }
 
     const phase = this.phase;
     if (phase.kind === "swap") {
@@ -657,10 +755,36 @@ export class MatchGame {
     const hinting = this.phase.kind === "idle" ? this.hint : null;
     const pulse = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(time / 160));
 
+    const drag = this.drag;
+    let dragged: { vis: Vis; x: number; y: number } | null = null;
     for (const vis of this.tiles) {
       const pos = this.visualCell(vis);
-      const x = pad + pos.c * stride;
-      const y = pad + pos.r * stride;
+      let x = pad + pos.c * stride;
+      let y = pad + pos.r * stride;
+      if (drag && vis.id === drag.visId) {
+        // 本体跟手指走，这里只留空槽；循环结束后单独画在最上层
+        ctx.fillStyle = "#1a1322";
+        ctx.fillRect(x, y, cell, cell);
+        ctx.strokeStyle = "rgba(246,231,193,0.28)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x + 2, y + 2, cell - 4, cell - 4);
+        dragged = { vis, x: drag.x, y: drag.y };
+        continue;
+      }
+      const ret = this.returns.find((item) => item.id === vis.id);
+      if (ret) {
+        const u = ease(ret.t / RETURN_DUR);
+        x = ret.x + (pad + vis.homeC * stride - ret.x) * u;
+        y = ret.y + (pad + vis.homeR * stride - ret.y) * u;
+      } else if (
+        drag?.target &&
+        vis.homeR === drag.target.r &&
+        vis.homeC === drag.target.c
+      ) {
+        // 落点预览：目标格往来源方向让位 30%，暗示松手会交换
+        x += (pad + drag.homeC * stride - x) * 0.3;
+        y += (pad + drag.homeR * stride - y) * 0.3;
+      }
       const scale = 1 - vis.pop * 0.85;
       ctx.save();
       ctx.globalAlpha = 1 - vis.pop * 0.9;
@@ -687,6 +811,28 @@ export class MatchGame {
         ctx.strokeRect(x + 1.5, y + 1.5, cell - 3, cell - 3);
         ctx.restore();
       }
+    }
+    if (drag && dragged) {
+      if (drag.target) {
+        const tx = pad + drag.target.c * stride;
+        const ty = pad + drag.target.r * stride;
+        ctx.strokeStyle = "#f0a05a";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(tx + 1.5, ty + 1.5, cell - 3, cell - 3);
+      }
+      const { vis, x, y } = dragged;
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.45)";
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 4;
+      ctx.translate(x + cell / 2, y + cell / 2);
+      ctx.scale(1.1, 1.1);
+      ctx.translate(-cell / 2, -cell / 2);
+      ctx.fillStyle = "#1a1322";
+      ctx.fillRect(0, 0, cell, cell);
+      drawFood(ctx, vis.type, cell);
+      drawSpecial(ctx, vis.special, cell, time);
+      ctx.restore();
     }
 
     for (const particle of this.particles) {

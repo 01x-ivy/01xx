@@ -215,7 +215,7 @@ export function ZhizhiGame() {
           ref={canvasRef}
           className="touch-none"
           role="application"
-          aria-label="芝芝消消。点相邻两块，或滑动交换"
+          aria-label="芝芝消消。按住食物拖到隔壁松手，或点相邻两块"
           onPointerDown={(event) => {
             canvasRef.current?.setPointerCapture(event.pointerId);
             gameRef.current?.pointerDown(
@@ -227,6 +227,14 @@ export function ZhizhiGame() {
           }}
           onPointerUp={(event) => {
             gameRef.current?.pointerUp(
+              event.currentTarget,
+              event.pointerId,
+              event.clientX,
+              event.clientY,
+            );
+          }}
+          onPointerMove={(event) => {
+            gameRef.current?.pointerMove(
               event.currentTarget,
               event.pointerId,
               event.clientX,
